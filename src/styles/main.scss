@@ -1,0 +1,47 @@
+:root {
+  --color-bg-app: #ebebeb;
+  --color-surface-light: #ffffff;
+  --color-surface-dark: #0b1021;
+  --color-surface-dark-alt: #111827;
+  --color-border-light: #dbe2ea;
+  --color-border-muted: #cbd5e1;
+  --color-border-strong: #334155;
+  --color-text-primary: #0f172a;
+  --color-text-inverse: #f8fafc;
+  --color-text-muted: #94a3b8;
+  --color-text-subtle: #64748b;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fca5a5;
+  --color-focus: #38bdf8;
+  --gradient-accent: linear-gradient(135deg, #3b82f6, #22d3ee);
+
+  // Backward-compatible aliases.
+  --bg: var(--color-bg-app);
+  --panel: var(--color-surface-light);
+  --border: var(--color-border-light);
+  --ink: var(--color-text-primary);
+}
+
+$font-stack:
+  'Inter',
+  system-ui,
+  -apple-system,
+  BlinkMacSystemFont,
+  'Segoe UI',
+  sans-serif;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: $font-stack;
+  min-height: 100vh;
+  color: var(--color-text-primary);
+  background: var(--color-bg-app);
+}
+
+a {
+  color: #2563eb;
+}
