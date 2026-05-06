@@ -1,9 +1,5 @@
-import { useState } from 'react'
-import './App.css'
+import './App.scss'
 import AnalysisPanel from './components/AnalysisPanel'
-
-// import { onBeforeUnmount } from 'vue'
-// import { storeToRefs } from 'pinia'
 import ChessBoard from './components/ChessBoard.tsx'
 import ChatWindow from './components/ChatWindow.tsx'
 import MoveList from './components/MoveList.tsx'
@@ -11,10 +7,10 @@ import { useGameStore } from './store/gameStore'
 
 
 function App() {
+  const gameStore = useGameStore()
 
   return (
     <>
-      <template>
         <div className="app-shell">
           <header className="app-header">
             <div>
@@ -27,50 +23,54 @@ function App() {
             <label htmlFor="pgn-input">PGN Input</label>
             <textarea
               id="pgn-input"
-              v-model="pgnInput"
+              value={gameStore.pgnInput}
+              onChange={(event) => gameStore.setPgnInput(event.target.value)}
               placeholder="Paste PGN here (example: 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6)"
             />
             <div className="header-actions">
-              <button type="button" className="ghost" onClick={useGameStore.requestPgnImport}>Import PGN</button>
+              <button type="button" className="ghost" onClick={gameStore.requestPgnImport}>Import PGN</button>
             </div>
-            <p
-              v-if="pgnImportStatus && !pgnImportStatus.ok"
-              className="import-status error"
-              role="status"
-              aria-live="polite"
-            >
-              {/* {{ pgnImportStatus.message }} */}
-            </p>
+            {gameStore.pgnImportStatus && !gameStore.pgnImportStatus.ok && (
+              <p
+                className="import-status error"
+                role="status"
+                aria-live="polite"
+              >
+                {gameStore.pgnImportStatus.message}
+              </p>
+            )}
           </section>
 
           <main className="layout">
             <section className="board-area">
               <ChessBoard
-                // :import-pgn="pgnImportRequest"
-                // :jump-to-ply="jumpToPlyRequest"
-                moves-updated={useGameStore.setMoves}
-                pgn-import-status={useGameStore.setPgnImportStatus}
-                position-updated={useGameStore.setCurrentFen}
-                pgn-updated={useGameStore.setCurrentPgn}  
+                // importPgn={gameStore.pgnImportRequest}
+                // jumpToPly={gameStore.jumpToPlyRequest}
+                onMovesUpdated={gameStore.setMoves}
+                onPgnImportStatus={gameStore.setPgnImportStatus}
+                onPositionUpdated={gameStore.setCurrentFen}
+                onPgnUpdated={gameStore.setCurrentPgn}  
               />
             </section>
             <section className="moves-area">
-              <MoveList moves="moves" ply-selected={useGameStore.requestJumpToPly} />
+              <MoveList moves={gameStore.moves} onPlySelected={gameStore.requestJumpToPly} />
             </section>
 
             <section className="sidebar-area">
               <section className="analysis-area">
                 <AnalysisPanel
-                  enabled={useGameStore.engineEnabled}
-                  v-model:depth={useGameStore.analysisDepth}
-                  v-model:multi-pv={useGameStore.analysisLines}
-                  ready={useGameStore.isReady}
-                  loading={useGameStore.isAnalyzing}
-                  current-fen={useGameStore.currentFen}
-                  error={useGameStore.analysisError}
-                  evaluation={useGameStore.evaluation}
-                  // update:enabled={useGameStore.setEngineEnabled}
-                  cancel-analysis={useGameStore.cancelAnalysis}
+                  enabled={gameStore.engineEnabled}
+                  depth={gameStore.analysisDepth}
+                  multiPv={gameStore.analysisLines}
+                  ready={gameStore.isReady}
+                  loading={gameStore.isAnalyzing}
+                  currentFen={gameStore.currentFen}
+                  error={gameStore.analysisError}
+                  evaluation={gameStore.evaluation}
+                  onEnabledChange={gameStore.setEngineEnabled}
+                  onDepthChange={gameStore.setAnalysisDepth}
+                  onMultiPvChange={gameStore.setAnalysisLines}
+                  onCancelAnalysis={gameStore.cancelAnalysis}
                 />
               </section>
               <section className="chat-area">
@@ -79,7 +79,6 @@ function App() {
             </section>
           </main>
         </div>
-      </template>
     </>
   )
 }

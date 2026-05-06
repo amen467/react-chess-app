@@ -1,7 +1,11 @@
 // store/gameSlice.ts
-import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit'
+import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
+import type { PayloadAction } from '@reduxjs/toolkit'
+import { useDispatch, useSelector } from 'react-redux'
+import type { TypedUseSelectorHook } from 'react-redux'
 import { useStockfish } from '../compostables/useStockfish'
 import { useChat } from '../compostables/useChat'
+import type { EngineEvaluation } from '../types/chess'
 
 
 interface PgnImportRequest {
@@ -30,7 +34,10 @@ interface GameState {
   currentPgn: string
   analysisDepth: number
   analysisLines: number
-  // Stockfish/Chat state will be handled separately in thunks
+  isReady: boolean
+  isAnalyzing: boolean
+  analysisError?: string | null
+  evaluation?: EngineEvaluation | null
 }
 
 const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -43,6 +50,10 @@ const initialState: GameState = {
   currentPgn: '',
   analysisDepth: 22,
   analysisLines: 5,
+  isReady: false,
+  isAnalyzing: false,
+  analysisError: null,
+  evaluation: null,
 }
 
 // Initialize Stockfish and Chat outside slice
@@ -77,15 +88,20 @@ export const runAnalysis = createAsyncThunk(
     if (!state.game.engineEnabled) return
 
     try {
-      await stockfish.analyzePosition(state.game.currentFen, {
+      return await stockfish.analyzePosition(state.game.currentFen, {
         depth: state.game.analysisDepth,
         multiPv: state.game.analysisLines,
       })
-    } catch {
-      // Error is handled inside useStockfish
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Analysis failed.'
+      throw new Error(message)
     }
   }
 )
+
+export const cancelAnalysis = createAsyncThunk('game/cancelAnalysis', async () => {
+  stockfish.cancelAnalysis()
+})
 
 // Async thunk to send chat message
 export const sendChatMessage = createAsyncThunk(
@@ -119,6 +135,12 @@ export const gameSlice = createSlice({
     setPgnInput(state, action: PayloadAction<string>) {
       state.pgnInput = action.payload
     },
+    setAnalysisDepth(state, action: PayloadAction<number>) {
+      state.analysisDepth = action.payload
+    },
+    setAnalysisLines(state, action: PayloadAction<number>) {
+      state.analysisLines = action.payload
+    },
     requestPgnImport(state) {
       state.pgnImportRequest = { id: Date.now(), text: state.pgnInput }
     },
@@ -127,9 +149,34 @@ export const gameSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    builder.addCase(setEngineEnabled.fulfilled, (state, action) => {
-      state.engineEnabled = action.payload
-    })
+    builder
+      .addCase(setEngineEnabled.pending, (state) => {
+        state.analysisError = null
+      })
+      .addCase(setEngineEnabled.fulfilled, (state, action) => {
+        state.engineEnabled = action.payload
+        state.isReady = action.payload
+      })
+      .addCase(setEngineEnabled.rejected, (state, action) => {
+        state.engineEnabled = false
+        state.isReady = false
+        state.analysisError = action.error.message ?? 'Could not start engine.'
+      })
+      .addCase(runAnalysis.pending, (state) => {
+        state.isAnalyzing = true
+        state.analysisError = null
+      })
+      .addCase(runAnalysis.fulfilled, (state, action) => {
+        state.isAnalyzing = false
+        state.evaluation = action.payload ?? null
+      })
+      .addCase(runAnalysis.rejected, (state, action) => {
+        state.isAnalyzing = false
+        state.analysisError = action.error.message ?? 'Analysis failed.'
+      })
+      .addCase(cancelAnalysis.fulfilled, (state) => {
+        state.isAnalyzing = false
+      })
   },
 })
 
@@ -139,8 +186,42 @@ export const {
   setCurrentFen,
   setCurrentPgn,
   setPgnInput,
+  setAnalysisDepth,
+  setAnalysisLines,
   requestPgnImport,
   requestJumpToPly,
 } = gameSlice.actions
+
+export const store = configureStore({
+  reducer: {
+    game: gameSlice.reducer,
+  },
+})
+
+export type RootState = ReturnType<typeof store.getState>
+export type AppDispatch = typeof store.dispatch
+
+export const useAppDispatch = () => useDispatch<AppDispatch>()
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector
+
+export const useGameStore = () => {
+  const dispatch = useAppDispatch()
+  const game = useAppSelector((state) => state.game)
+
+  return {
+    ...game,
+    setMoves: (moves: string[]) => dispatch(setMoves(moves)),
+    setPgnImportStatus: (status: PgnImportStatus) => dispatch(setPgnImportStatus(status)),
+    setCurrentFen: (fen: string) => dispatch(setCurrentFen(fen)),
+    setCurrentPgn: (pgn: string) => dispatch(setCurrentPgn(pgn)),
+    setPgnInput: (pgn: string) => dispatch(setPgnInput(pgn)),
+    setAnalysisDepth: (depth: number) => dispatch(setAnalysisDepth(depth)),
+    setAnalysisLines: (lines: number) => dispatch(setAnalysisLines(lines)),
+    requestPgnImport: () => dispatch(requestPgnImport()),
+    requestJumpToPly: (ply: number) => dispatch(requestJumpToPly(ply)),
+    setEngineEnabled: (enabled: boolean) => dispatch(setEngineEnabled(enabled)),
+    cancelAnalysis: () => dispatch(cancelAnalysis()),
+  }
+}
 
 export default gameSlice.reducer
