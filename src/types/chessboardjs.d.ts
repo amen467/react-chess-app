@@ -17,3 +17,10 @@ declare module '@chrisoakman/chessboardjs' {
     config: BoardConfig | string,
   ): BoardInstance
 }
+
+declare module '@chrisoakman/chessboardjs/dist/chessboard-1.0.0.js' {
+  const Chessboard: typeof import('@chrisoakman/chessboardjs').default
+  export default Chessboard
+}
+
+declare module '@chrisoakman/chessboardjs/dist/chessboard-1.0.0.min.css'

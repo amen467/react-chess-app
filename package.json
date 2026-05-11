@@ -10,11 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@chrisoakman/chessboardjs": "^1.0.0",
     "@reduxjs/toolkit": "^2.11.2",
     "chess.js": "^1.4.0",
+    "jquery": "^3.7.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "react-redux": "^9.2.0"
+    "react-redux": "^9.2.0",
+    "stockfish": "^18.0.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

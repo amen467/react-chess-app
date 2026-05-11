@@ -1,5 +1,5 @@
 // store/gameSlice.ts
-import { configureStore, createAsyncThunk, createSlice } from '@reduxjs/toolkit'
+import { configureStore, createSlice } from '@reduxjs/toolkit'
 import type { PayloadAction } from '@reduxjs/toolkit'
 import { useDispatch, useSelector } from 'react-redux'
 import type { TypedUseSelectorHook } from 'react-redux'
@@ -56,70 +56,22 @@ const initialState: GameState = {
   evaluation: null,
 }
 
-// Initialize Stockfish and Chat outside slice
-const stockfish = useStockfish()
-const chat = useChat()
-
-// Async thunk to enable or disable engine
-export const setEngineEnabled = createAsyncThunk(
-  'game/setEngineEnabled',
-  async (enabled: boolean, { dispatch }) => {
-    if (!enabled) {
-      stockfish.destroy()
-      return false
-    }
-
-    try {
-      await stockfish.start()
-      await dispatch(runAnalysis())
-      return true
-    } catch {
-      stockfish.destroy()
-      return false
-    }
-  }
-)
-
-// Async thunk to run analysis
-export const runAnalysis = createAsyncThunk(
-  'game/runAnalysis',
-  async (_, { getState }) => {
-    const state = getState() as { game: GameState }
-    if (!state.game.engineEnabled) return
-
-    try {
-      return await stockfish.analyzePosition(state.game.currentFen, {
-        depth: state.game.analysisDepth,
-        multiPv: state.game.analysisLines,
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Analysis failed.'
-      throw new Error(message)
-    }
-  }
-)
-
-export const cancelAnalysis = createAsyncThunk('game/cancelAnalysis', async () => {
-  stockfish.cancelAnalysis()
-})
-
-// Async thunk to send chat message
-export const sendChatMessage = createAsyncThunk(
-  'game/sendChatMessage',
-  async ({ text, includeCurrentPosition }: { text: string; includeCurrentPosition: boolean }, { getState }) => {
-    const state = getState() as { game: GameState }
-    return chat.send(text, {
-      includeCurrentPosition,
-      currentFen: state.game.currentFen,
-      currentPgn: state.game.currentPgn,
-    })
-  }
-)
-
 export const gameSlice = createSlice({
   name: 'game',
   initialState,
   reducers: {
+    setEngineEnabledState(state, action: PayloadAction<boolean>) {
+      state.engineEnabled = action.payload
+      state.analysisError = null
+      if (!action.payload) {
+        state.isReady = false
+        state.isAnalyzing = false
+        state.evaluation = null
+      }
+    },
+    setEngineReady(state, action: PayloadAction<boolean>) {
+      state.isReady = action.payload
+    },
     setMoves(state, action: PayloadAction<string[]>) {
       state.moves = action.payload
     },
@@ -147,40 +99,29 @@ export const gameSlice = createSlice({
     requestJumpToPly(state, action: PayloadAction<number>) {
       state.jumpToPlyRequest = { id: Date.now(), ply: action.payload }
     },
-  },
-  extraReducers: (builder) => {
-    builder
-      .addCase(setEngineEnabled.pending, (state) => {
-        state.analysisError = null
-      })
-      .addCase(setEngineEnabled.fulfilled, (state, action) => {
-        state.engineEnabled = action.payload
-        state.isReady = action.payload
-      })
-      .addCase(setEngineEnabled.rejected, (state, action) => {
-        state.engineEnabled = false
-        state.isReady = false
-        state.analysisError = action.error.message ?? 'Could not start engine.'
-      })
-      .addCase(runAnalysis.pending, (state) => {
-        state.isAnalyzing = true
-        state.analysisError = null
-      })
-      .addCase(runAnalysis.fulfilled, (state, action) => {
-        state.isAnalyzing = false
-        state.evaluation = action.payload ?? null
-      })
-      .addCase(runAnalysis.rejected, (state, action) => {
-        state.isAnalyzing = false
-        state.analysisError = action.error.message ?? 'Analysis failed.'
-      })
-      .addCase(cancelAnalysis.fulfilled, (state) => {
-        state.isAnalyzing = false
-      })
+    startAnalysis(state) {
+      state.isAnalyzing = true
+      state.analysisError = null
+    },
+    finishAnalysis(state, action: PayloadAction<EngineEvaluation | null>) {
+      state.isAnalyzing = false
+      state.evaluation = action.payload
+    },
+    failAnalysis(state, action: PayloadAction<string>) {
+      state.isAnalyzing = false
+      state.analysisError = action.payload
+    },
+    clearAnalysis(state) {
+      state.isAnalyzing = false
+      state.evaluation = null
+      state.analysisError = null
+    },
   },
 })
 
 export const {
+  setEngineEnabledState,
+  setEngineReady,
   setMoves,
   setPgnImportStatus,
   setCurrentFen,
@@ -190,6 +131,10 @@ export const {
   setAnalysisLines,
   requestPgnImport,
   requestJumpToPly,
+  startAnalysis,
+  finishAnalysis,
+  failAnalysis,
+  clearAnalysis,
 } = gameSlice.actions
 
 export const store = configureStore({
@@ -208,64 +153,113 @@ export const useGameStore = () => {
   const dispatch = useAppDispatch()
   const game = useAppSelector((state) => state.game)
 
-  const {
-    isReady,
-    isAnalyzing,
-    evaluation,
-    start,
-    cancelAnalysis,
-    destroy,
-    analyzePosition,
-  } = useStockfish()
+  const stockfish = useStockfish()
+  const chat = useChat()
 
-  const {
-    messages,
-    sending,
-    send,
-    cancelSend,
-    apiKey,
-    loadApiKey,
-    saveApiKey,
-    clearApiKey,
-    unlockApiKey,
-    lockApiKey,
-    hasStoredEncryptedKey,
-    lastError,
-  } = useChat()
+  const runPositionAnalysis = async (
+    fen = game.currentFen,
+    depth = game.analysisDepth,
+    multiPv = game.analysisLines,
+    enabled = game.engineEnabled,
+  ) => {
+    if (!enabled) return
+
+    dispatch(startAnalysis())
+    try {
+      const nextEvaluation = await stockfish.analyzePosition(fen, {
+        depth,
+        multiPv,
+      })
+      dispatch(finishAnalysis(nextEvaluation))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Analysis failed.'
+      if (message === 'Analysis canceled by user.' || message === 'Stockfish engine stopped.') {
+        dispatch(clearAnalysis())
+        return
+      }
+      dispatch(failAnalysis(message))
+    }
+  }
+
+  const setEngineEnabled = async (enabled: boolean) => {
+    if (!enabled) {
+      stockfish.destroy()
+      dispatch(setEngineEnabledState(false))
+      return
+    }
+
+    dispatch(setEngineEnabledState(true))
+    dispatch(setEngineReady(false))
+    try {
+      await stockfish.start()
+      dispatch(setEngineReady(true))
+      await runPositionAnalysis(game.currentFen, game.analysisDepth, game.analysisLines, true)
+    } catch (error) {
+      stockfish.destroy()
+      const message = error instanceof Error ? error.message : 'Could not start engine.'
+      dispatch(setEngineEnabledState(false))
+      dispatch(failAnalysis(message))
+    }
+  }
+
+  const setPositionFen = (fen: string) => {
+    dispatch(setCurrentFen(fen))
+    void runPositionAnalysis(fen)
+  }
+
+  const setDepth = (depth: number) => {
+    dispatch(setAnalysisDepth(depth))
+    void runPositionAnalysis(game.currentFen, depth, game.analysisLines)
+  }
+
+  const setLines = (lines: number) => {
+    dispatch(setAnalysisLines(lines))
+    void runPositionAnalysis(game.currentFen, game.analysisDepth, lines)
+  }
+
+  const cancelCurrentAnalysis = () => {
+    stockfish.cancelAnalysis()
+    dispatch(clearAnalysis())
+  }
+
+  const sendChatMessage = (text: string, includeCurrentPosition: boolean) => {
+    return chat.send(text, {
+      includeCurrentPosition,
+      currentFen: game.currentFen,
+      currentPgn: game.currentPgn,
+    })
+  }
 
   return {
     ...game,
     setMoves: (moves: string[]) => dispatch(setMoves(moves)),
     setPgnImportStatus: (status: PgnImportStatus) => dispatch(setPgnImportStatus(status)),
-    setCurrentFen: (fen: string) => dispatch(setCurrentFen(fen)),
+    setCurrentFen: setPositionFen,
     setCurrentPgn: (pgn: string) => dispatch(setCurrentPgn(pgn)),
     setPgnInput: (pgn: string) => dispatch(setPgnInput(pgn)),
-    setAnalysisDepth: (depth: number) => dispatch(setAnalysisDepth(depth)),
-    setAnalysisLines: (lines: number) => dispatch(setAnalysisLines(lines)),
+    setAnalysisDepth: setDepth,
+    setAnalysisLines: setLines,
     requestPgnImport: () => dispatch(requestPgnImport()),
     requestJumpToPly: (ply: number) => dispatch(requestJumpToPly(ply)),
-    setEngineEnabled: (enabled: boolean) => dispatch(setEngineEnabled(enabled)),
-    cancelAnalysis: () => dispatch(cancelAnalysis()),
+    setEngineEnabled,
+    cancelAnalysis: cancelCurrentAnalysis,
 
-    isReady,
-    isAnalyzing,
-    evaluation,
-    start,
-    destroy,
-    analyzePosition,
+    start: stockfish.start,
+    destroy: stockfish.destroy,
+    analyzePosition: stockfish.analyzePosition,
 
-    messages,
-    sending,
-    send,
-    cancelSend,
-    apiKey,
-    loadApiKey,
-    saveApiKey,
-    clearApiKey,
-    unlockApiKey,
-    lockApiKey,
-    hasStoredEncryptedKey,
-    lastError,
+    messages: chat.messages,
+    sending: chat.sending,
+    send: chat.send,
+    cancelSend: chat.cancelSend,
+    apiKey: chat.apiKey,
+    loadApiKey: chat.loadApiKey,
+    saveApiKey: chat.saveApiKey,
+    clearApiKey: chat.clearApiKey,
+    unlockApiKey: chat.unlockApiKey,
+    lockApiKey: chat.lockApiKey,
+    hasStoredEncryptedKey: chat.hasStoredEncryptedKey,
+    lastError: chat.lastError,
     sendChatMessage
   }
 }

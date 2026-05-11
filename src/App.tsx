@@ -44,8 +44,8 @@ function App() {
           <main className="layout">
             <section className="board-area">
               <ChessBoard
-                // importPgn={gameStore.pgnImportRequest}
-                // jumpToPly={gameStore.jumpToPlyRequest}
+                importPgn={gameStore.pgnImportRequest}
+                jumpToPly={gameStore.jumpToPlyRequest}
                 onMovesUpdated={gameStore.setMoves}
                 onPgnImportStatus={gameStore.setPgnImportStatus}
                 onPositionUpdated={gameStore.setCurrentFen}

@@ -87,7 +87,7 @@ const ChessBoard = ({
   }: boardProps) => {
 
   const boardContainerEl = useRef<HTMLElement | null>(null)
-  const boardEl = useRef<HTMLElement | null>(null)
+  const boardEl = useRef<HTMLDivElement | null>(null)
   const gameRef = useRef(new Chess())
   const boardRef = useRef<BoardApi | null>(null)
   const boardResizeObserverRef = useRef<ResizeObserver | null>(null)
