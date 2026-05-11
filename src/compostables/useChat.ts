@@ -1,5 +1,5 @@
-import { ref } from 'vue'
-import { createRequestLifecycle } from '@/utils/requestLifecycle'
+import { useRef, useState } from 'react'
+import { createRequestLifecycle } from '../utils/requestLifecycle'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -181,13 +181,43 @@ const buildChatRequest = (
 }
 
 export function useChat() {
-  const messages = ref<ChatMessage[]>([])
-  const sending = ref(false)
-  const apiKey = ref('')
-  const lastError = ref<string | null>(null)
-  const hasStoredEncryptedKey = ref(false)
-  const lastResponseId = ref<string | null>(null)
-  const requestLifecycle = createRequestLifecycle<'timeout' | 'user'>()
+  const [messages, setMessagesState] = useState<ChatMessage[]>([])
+  const [sending, setSendingState] = useState(false)
+  const [apiKey, setApiKeyState] = useState('')
+  const [lastError, setLastErrorState] = useState<string | null>(null)
+  const [hasStoredEncryptedKey, setHasStoredEncryptedKeyState] = useState(false)
+  const messagesRef = useRef<ChatMessage[]>([])
+  const sendingRef = useRef(false)
+  const apiKeyRef = useRef('')
+  const lastResponseId = useRef<string | null>(null)
+  const requestLifecycle = useRef(createRequestLifecycle<'timeout' | 'user'>()).current
+
+  const setMessages = (nextMessages: ChatMessage[]) => {
+    messagesRef.current = nextMessages
+    setMessagesState(nextMessages)
+  }
+
+  const addMessage = (message: ChatMessage) => {
+    setMessages([...messagesRef.current, message])
+  }
+
+  const setSending = (value: boolean) => {
+    sendingRef.current = value
+    setSendingState(value)
+  }
+
+  const setApiKey = (value: string) => {
+    apiKeyRef.current = value
+    setApiKeyState(value)
+  }
+
+  const setLastError = (value: string | null) => {
+    setLastErrorState(value)
+  }
+
+  const setHasStoredEncryptedKey = (value: boolean) => {
+    setHasStoredEncryptedKeyState(value)
+  }
 
   const cancelSend = () => {
     requestLifecycle.cancel('user')
@@ -195,21 +225,23 @@ export function useChat() {
 
   const loadApiKey = async () => {
     if (typeof window === 'undefined') return
-    hasStoredEncryptedKey.value = Boolean(window.localStorage.getItem(API_KEY_STORAGE_KEY))
-    apiKey.value = ''
+    const storedEncryptedKey = Boolean(window.localStorage.getItem(API_KEY_STORAGE_KEY))
+    setHasStoredEncryptedKey(storedEncryptedKey)
+    setApiKey('')
 
     const legacyKey = window.localStorage.getItem(LEGACY_API_KEY_STORAGE_KEY)
     if (legacyKey) {
-      apiKey.value = legacyKey
-      hasStoredEncryptedKey.value = true
+      setApiKey(legacyKey)
+      setHasStoredEncryptedKey(true)
       window.localStorage.removeItem(LEGACY_API_KEY_STORAGE_KEY)
-      lastError.value =
-        'A legacy unencrypted key was loaded into memory. Save it with a passphrase to encrypt it.'
+      setLastError(
+        'A legacy unencrypted key was loaded into memory. Save it with a passphrase to encrypt it.',
+      )
       return
     }
 
     const sessionPassphrase = window.sessionStorage.getItem(SESSION_PASSPHRASE_KEY)
-    if (hasStoredEncryptedKey.value && sessionPassphrase) {
+    if (storedEncryptedKey && sessionPassphrase) {
       await unlockApiKey(sessionPassphrase)
     }
   }
@@ -217,23 +249,23 @@ export function useChat() {
   const saveApiKey = async (nextKey: string, passphrase: string) => {
     if (typeof window === 'undefined') return
     if (!window.crypto?.subtle) {
-      lastError.value = 'Web Crypto is not available in this browser.'
+      setLastError('Web Crypto is not available in this browser.')
       return
     }
     const trimmed = nextKey.trim()
     const passphraseTrimmed = passphrase.trim()
     if (!passphraseTrimmed || passphraseTrimmed.length < 8) {
-      lastError.value = 'Passphrase must be at least 8 characters.'
+      setLastError('Passphrase must be at least 8 characters.')
       return
     }
 
-    lastError.value = null
+    setLastError(null)
 
     if (!trimmed) {
       window.localStorage.removeItem(API_KEY_STORAGE_KEY)
       window.localStorage.removeItem(LEGACY_API_KEY_STORAGE_KEY)
-      hasStoredEncryptedKey.value = false
-      apiKey.value = ''
+      setHasStoredEncryptedKey(false)
+      setApiKey('')
       return
     }
 
@@ -241,26 +273,26 @@ export function useChat() {
     window.localStorage.setItem(API_KEY_STORAGE_KEY, encryptedPayload)
     window.localStorage.removeItem(LEGACY_API_KEY_STORAGE_KEY)
     window.sessionStorage.setItem(SESSION_PASSPHRASE_KEY, passphraseTrimmed)
-    hasStoredEncryptedKey.value = true
-    apiKey.value = trimmed
+    setHasStoredEncryptedKey(true)
+    setApiKey(trimmed)
   }
 
   const clearApiKey = () => {
     cancelSend()
     if (typeof window === 'undefined') return
-    lastError.value = null
-    apiKey.value = ''
-    lastResponseId.value = null
+    setLastError(null)
+    setApiKey('')
+    lastResponseId.current = null
     window.localStorage.removeItem(API_KEY_STORAGE_KEY)
     window.localStorage.removeItem(LEGACY_API_KEY_STORAGE_KEY)
     window.sessionStorage.removeItem(SESSION_PASSPHRASE_KEY)
-    hasStoredEncryptedKey.value = false
+    setHasStoredEncryptedKey(false)
   }
 
   const lockApiKey = () => {
     cancelSend()
-    apiKey.value = ''
-    lastResponseId.value = null
+    setApiKey('')
+    lastResponseId.current = null
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(SESSION_PASSPHRASE_KEY)
     }
@@ -269,43 +301,43 @@ export function useChat() {
   const unlockApiKey = async (passphrase: string) => {
     if (typeof window === 'undefined') return
     if (!window.crypto?.subtle) {
-      lastError.value = 'Web Crypto is not available in this browser.'
+      setLastError('Web Crypto is not available in this browser.')
       return
     }
     const passphraseTrimmed = passphrase.trim()
     if (!passphraseTrimmed) {
-      lastError.value = 'Enter a passphrase to unlock the API key.'
+      setLastError('Enter a passphrase to unlock the API key.')
       return
     }
 
     const encryptedPayload = window.localStorage.getItem(API_KEY_STORAGE_KEY)
     if (!encryptedPayload) {
-      lastError.value = 'No encrypted API key is stored yet.'
+      setLastError('No encrypted API key is stored yet.')
       return
     }
 
     try {
-      apiKey.value = await decryptApiKey(encryptedPayload, passphraseTrimmed)
+      setApiKey(await decryptApiKey(encryptedPayload, passphraseTrimmed))
       window.sessionStorage.setItem(SESSION_PASSPHRASE_KEY, passphraseTrimmed)
-      lastError.value = null
+      setLastError(null)
     } catch {
-      lastError.value = 'Unable to decrypt key. Check passphrase.'
-      apiKey.value = ''
+      setLastError('Unable to decrypt key. Check passphrase.')
+      setApiKey('')
     }
   }
 
   const send = async (text: string, options: SendOptions = {}) => {
     if (!text.trim()) return false
-    if (sending.value) return false
-    if (!apiKey.value.trim()) {
-      lastError.value = 'Add your API key before sending messages.'
+    if (sendingRef.current) return false
+    if (!apiKeyRef.current.trim()) {
+      setLastError('Add your API key before sending messages.')
       return false
     }
 
     const userText = text.trim()
-    lastError.value = null
-    sending.value = true
-    messages.value.push({ role: 'user', text: userText })
+    setLastError(null)
+    setSending(true)
+    addMessage({ role: 'user', text: userText })
 
     let composedUserText = userText
     if (options.includeCurrentPosition && (options.currentFen || options.currentPgn)) {
@@ -328,13 +360,13 @@ export function useChat() {
     })
 
     try {
-      const requestPayload = buildChatRequest(composedUserText, lastResponseId.value)
+      const requestPayload = buildChatRequest(composedUserText, lastResponseId.current)
 
       const response = await fetch(OPENAI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey.value}`,
+          Authorization: `Bearer ${apiKeyRef.current}`,
         },
         body: JSON.stringify(requestPayload),
         signal: controller.signal,
@@ -352,9 +384,9 @@ export function useChat() {
       }
 
       const payload = (await response.json()) as ResponsesApiPayload
-      lastResponseId.value = payload.id || null
+      lastResponseId.current = payload.id || null
       const assistantText = extractAssistantText(payload) || 'No response text returned.'
-      messages.value.push({ role: 'assistant', text: assistantText })
+      addMessage({ role: 'assistant', text: assistantText })
       return true
     } catch (error) {
       const isAbortError = error instanceof DOMException && error.name === 'AbortError'
@@ -373,14 +405,14 @@ export function useChat() {
         message = error instanceof Error ? error.message : 'Unable to reach OpenAI.'
       }
 
-      lastError.value = message
+      setLastError(message)
       if (shouldAppendAssistantError) {
-        messages.value.push({ role: 'assistant', text: `Error: ${message}` })
+        addMessage({ role: 'assistant', text: `Error: ${message}` })
       }
       return false
     } finally {
       requestLifecycle.end(requestId)
-      sending.value = false
+      setSending(false)
     }
   }
 

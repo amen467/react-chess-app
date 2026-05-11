@@ -1,7 +1,7 @@
-import { computed, ref } from 'vue'
+import { useMemo, useRef, useState } from 'react'
 import { Chess } from 'chess.js'
-import type { EngineEvaluation, MoveEvaluation } from '@/types/chess'
-import { createRequestLifecycle } from '@/utils/requestLifecycle'
+import type { EngineEvaluation, MoveEvaluation } from '../types/chess'
+import { createRequestLifecycle } from '../utils/requestLifecycle'
 import stockfishWorkerUrl from 'stockfish/bin/stockfish-18-lite-single.js?url'
 import stockfishWasmUrl from 'stockfish/bin/stockfish-18-lite-single.wasm?url'
 
@@ -29,53 +29,83 @@ type AnalysisCancelReason =
   | 'worker-failure'
 
 export function useStockfish() {
-  const isReady = ref(false)
-  const isAnalyzing = ref(false)
-  const lastError = ref<string | null>(null)
-  const bestLines = ref<MoveEvaluation[]>([])
-  const evaluation = ref<EngineEvaluation | null>(null)
-  const analysisLifecycle = createRequestLifecycle<AnalysisCancelReason>()
+  const [isReady, setIsReadyState] = useState(false)
+  const [isAnalyzing, setIsAnalyzingState] = useState(false)
+  const [lastError, setLastErrorState] = useState<string | null>(null)
+  const [bestLines, setBestLinesState] = useState<MoveEvaluation[]>([])
+  const [evaluation, setEvaluationState] = useState<EngineEvaluation | null>(null)
+  const isReadyRef = useRef(false)
+  const isAnalyzingRef = useRef(false)
+  const lastErrorRef = useRef<string | null>(null)
+  const bestLinesRef = useRef<MoveEvaluation[]>([])
+  const evaluationRef = useRef<EngineEvaluation | null>(null)
+  const analysisLifecycleRef = useRef(createRequestLifecycle<AnalysisCancelReason>())
+  const workerRef = useRef<Worker | null>(null)
+  const readyPromiseRef = useRef<Promise<void> | null>(null)
+  const readyResolverRef = useRef<(() => void) | null>(null)
+  const readyRejecterRef = useRef<((reason?: unknown) => void) | null>(null)
+  const workerStartupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sawUciOkRef = useRef(false)
+  const pendingRef = useRef<PendingAnalysis | null>(null)
+  const lastRequestedDepthRef = useRef(12)
+  const currentAnalysisFenRef = useRef(INITIAL_FEN)
+  const analysisLifecycle = analysisLifecycleRef.current
 
-  let worker: Worker | null = null
-  let readyPromise: Promise<void> | null = null
-  let readyResolver: (() => void) | null = null
-  let readyRejecter: ((reason?: unknown) => void) | null = null
-  let workerStartupTimeout: ReturnType<typeof setTimeout> | null = null
-  let sawUciOk = false
-  let pending: PendingAnalysis | null = null
-  let lastRequestedDepth = 12
-  let currentAnalysisFen = INITIAL_FEN
+  const setIsReady = (value: boolean) => {
+    isReadyRef.current = value
+    setIsReadyState(value)
+  }
+
+  const setIsAnalyzing = (value: boolean) => {
+    isAnalyzingRef.current = value
+    setIsAnalyzingState(value)
+  }
+
+  const setLastError = (value: string | null) => {
+    lastErrorRef.current = value
+    setLastErrorState(value)
+  }
+
+  const setBestLines = (value: MoveEvaluation[]) => {
+    bestLinesRef.current = value
+    setBestLinesState(value)
+  }
+
+  const setEvaluation = (value: EngineEvaluation | null) => {
+    evaluationRef.current = value
+    setEvaluationState(value)
+  }
 
   const post = (command: string) => {
-    if (!worker) return
-    worker.postMessage(command)
+    if (!workerRef.current) return
+    workerRef.current.postMessage(command)
   }
 
   const resetAnalysis = () => {
-    bestLines.value = []
-    evaluation.value = null
+    setBestLines([])
+    setEvaluation(null)
   }
 
   const clearStartupTimeout = () => {
-    if (workerStartupTimeout === null) return
-    clearTimeout(workerStartupTimeout)
-    workerStartupTimeout = null
+    if (workerStartupTimeoutRef.current === null) return
+    clearTimeout(workerStartupTimeoutRef.current)
+    workerStartupTimeoutRef.current = null
   }
 
   const resolveReadyState = () => {
     clearStartupTimeout()
-    readyResolver?.()
-    readyResolver = null
-    readyRejecter = null
-    readyPromise = null
+    readyResolverRef.current?.()
+    readyResolverRef.current = null
+    readyRejecterRef.current = null
+    readyPromiseRef.current = null
   }
 
   const rejectReadyState = (message: string) => {
     clearStartupTimeout()
-    readyRejecter?.(new Error(message))
-    readyResolver = null
-    readyRejecter = null
-    readyPromise = null
+    readyRejecterRef.current?.(new Error(message))
+    readyResolverRef.current = null
+    readyRejecterRef.current = null
+    readyPromiseRef.current = null
   }
 
   const abortPendingAnalysis = (
@@ -88,15 +118,15 @@ export function useStockfish() {
   ) => {
     const { persistError = false, stopAnalyzing = true, requestId } = options
     if (stopAnalyzing) {
-      isAnalyzing.value = false
+      setIsAnalyzing(false)
     }
     if (persistError) {
-      lastError.value = message
+      setLastError(message)
     }
-    if (pending && (requestId == null || pending.requestId === requestId)) {
-      const pendingRequestId = pending.requestId
-      pending.reject(new Error(message))
-      pending = null
+    if (pendingRef.current && (requestId == null || pendingRef.current.requestId === requestId)) {
+      const pendingRequestId = pendingRef.current.requestId
+      pendingRef.current.reject(new Error(message))
+      pendingRef.current = null
       analysisLifecycle.end(pendingRequestId)
       return
     }
@@ -110,29 +140,29 @@ export function useStockfish() {
   }
 
   const terminateWorker = (sendQuit: boolean) => {
-    if (!worker) return
+    if (!workerRef.current) return
     if (sendQuit) {
       try {
-        worker.postMessage('quit')
+        workerRef.current.postMessage('quit')
       } catch {
         // Ignore worker post failures during teardown.
       }
     }
-    worker.removeEventListener('message', handleWorkerMessage as EventListener)
-    worker.removeEventListener('error', handleWorkerError)
-    worker.terminate()
-    worker = null
+    workerRef.current.removeEventListener('message', handleWorkerMessage as EventListener)
+    workerRef.current.removeEventListener('error', handleWorkerError)
+    workerRef.current.terminate()
+    workerRef.current = null
   }
 
   const failWorkerSession = (message: string) => {
-    isReady.value = false
-    sawUciOk = false
-    lastError.value = message
+    setIsReady(false)
+    sawUciOkRef.current = false
+    setLastError(message)
     rejectReadyState(message)
     if (analysisLifecycle.isActive()) {
       analysisLifecycle.cancel('worker-failure')
     } else {
-      isAnalyzing.value = false
+      setIsAnalyzing(false)
       analysisLifecycle.clear()
     }
     terminateWorker(false)
@@ -174,12 +204,12 @@ export function useStockfish() {
 
     if (!pvMatch || (!cpMatch && !mateMatch)) return
 
-    const depth = depthMatch ? Number(depthMatch[1]) : lastRequestedDepth
+    const depth = depthMatch ? Number(depthMatch[1]) : lastRequestedDepthRef.current
     const multipv = multipvMatch ? Number(multipvMatch[1]) : 1
     const pv = pvMatch[1]
     if (!pv) return
     const pvMoves = pv.trim().split(/\s+/)
-    const sanLine = uciLineToSan(currentAnalysisFen, pvMoves)
+    const sanLine = uciLineToSan(currentAnalysisFenRef.current, pvMoves)
     const leadingMove = sanLine[0] ?? pvMoves[0] ?? ''
 
     const lineEval: MoveEvaluation = {
@@ -189,18 +219,19 @@ export function useStockfish() {
       isMate: Boolean(mateMatch),
     }
 
-    const nextLines = [...bestLines.value]
+    const nextLines = [...bestLinesRef.current]
     const lineIndex = Math.max(multipv - 1, 0)
     nextLines[lineIndex] = lineEval
-    bestLines.value = nextLines.filter((entry) => Boolean(entry))
+    const filteredLines = nextLines.filter((entry) => Boolean(entry))
+    setBestLines(filteredLines)
 
-    const principal = bestLines.value[0] ?? null
-    evaluation.value = {
+    const principal = filteredLines[0] ?? null
+    setEvaluation({
       centipawns: principal && !principal.isMate ? principal.score : null,
       mateIn: principal && principal.isMate ? principal.score : null,
       depth,
-      bestMoves: bestLines.value,
-    }
+      bestMoves: filteredLines,
+    })
   }
 
   const handleWorkerMessage = (event: MessageEvent<string>) => {
@@ -208,15 +239,15 @@ export function useStockfish() {
     if (!line) return
 
     if (line === 'uciok') {
-      sawUciOk = true
+      sawUciOkRef.current = true
       post('isready')
       return
     }
 
     if (line === 'readyok') {
-      if (!sawUciOk) return
-      isReady.value = true
-      lastError.value = null
+      if (!sawUciOkRef.current) return
+      setIsReady(true)
+      setLastError(null)
       resolveReadyState()
       return
     }
@@ -224,15 +255,15 @@ export function useStockfish() {
     parseInfoLine(line)
 
     if (line.startsWith('bestmove')) {
-      if (!pending) return
-      const activePending = pending
-      isAnalyzing.value = false
-      if (evaluation.value) {
-        activePending.resolve(evaluation.value)
+      if (!pendingRef.current) return
+      const activePending = pendingRef.current
+      setIsAnalyzing(false)
+      if (evaluationRef.current) {
+        activePending.resolve(evaluationRef.current)
       } else {
         activePending.reject(new Error('Stockfish returned no evaluation.'))
       }
-      pending = null
+      pendingRef.current = null
       analysisLifecycle.end(activePending.requestId)
     }
   }
@@ -245,40 +276,40 @@ export function useStockfish() {
 
   const createWorker = () => {
     const workerSource = `${stockfishWorkerUrl}#${encodeURIComponent(stockfishWasmUrl)}`
-    worker = new Worker(workerSource)
-    worker.addEventListener('message', handleWorkerMessage as EventListener)
-    worker.addEventListener('error', handleWorkerError)
+    workerRef.current = new Worker(workerSource)
+    workerRef.current.addEventListener('message', handleWorkerMessage as EventListener)
+    workerRef.current.addEventListener('error', handleWorkerError)
 
-    readyPromise = new Promise<void>((resolve, reject) => {
-      readyResolver = resolve
-      readyRejecter = reject
+    readyPromiseRef.current = new Promise<void>((resolve, reject) => {
+      readyResolverRef.current = resolve
+      readyRejecterRef.current = reject
     })
 
     const timeoutSeconds = Math.round(WORKER_STARTUP_TIMEOUT_MS / 1000)
-    workerStartupTimeout = setTimeout(() => {
+    workerStartupTimeoutRef.current = setTimeout(() => {
       failWorkerSession(`Stockfish startup timed out after ${timeoutSeconds}s.`)
     }, WORKER_STARTUP_TIMEOUT_MS)
 
-    sawUciOk = false
-    isReady.value = false
+    sawUciOkRef.current = false
+    setIsReady(false)
     post('uci')
   }
 
   const ensureWorker = async () => {
-    if (worker && isReady.value) return
+    if (workerRef.current && isReadyRef.current) return
 
-    if (!worker || !readyPromise) {
+    if (!workerRef.current || !readyPromiseRef.current) {
       createWorker()
     }
 
-    if (!readyPromise) {
+    if (!readyPromiseRef.current) {
       throw new Error('Stockfish failed to create a startup session.')
     }
-    await readyPromise
+    await readyPromiseRef.current
   }
 
   const start = async () => {
-    lastError.value = null
+    setLastError(null)
     await ensureWorker()
   }
 
@@ -312,23 +343,23 @@ export function useStockfish() {
       abortPendingAnalysis('Stockfish engine stopped.', { requestId })
     },
     'worker-failure': (requestId) => {
-      abortPendingAnalysis(lastError.value ?? 'Stockfish worker crashed.', { requestId })
+      abortPendingAnalysis(lastErrorRef.current ?? 'Stockfish worker crashed.', { requestId })
     },
   }
 
   const analyzePosition = async (fen: string, options: AnalyzeOptions = {}) => {
     await start()
     resetAnalysis()
-    lastError.value = null
+    setLastError(null)
 
-    lastRequestedDepth = options.depth ?? 12
+    lastRequestedDepthRef.current = options.depth ?? 12
     const multiPv = options.multiPv ?? 3
 
     if (analysisLifecycle.isActive()) {
       analysisLifecycle.cancel('replaced')
     }
 
-    isAnalyzing.value = true
+    setIsAnalyzing(true)
     const timeoutSeconds = Math.round(ANALYSIS_TIMEOUT_MS / 1000)
     let requestId = 0
     requestId = analysisLifecycle.begin(() => {
@@ -342,25 +373,25 @@ export function useStockfish() {
     })
 
     const analysisPromise = new Promise<EngineEvaluation>((resolve, reject) => {
-      pending = { requestId, resolve, reject }
+      pendingRef.current = { requestId, resolve, reject }
     })
     analysisLifecycle.scheduleTimeout(requestId, ANALYSIS_TIMEOUT_MS, 'timeout', () => {
       analysisLifecycle.cancel('timeout')
     })
 
     const position = fen.trim() ? `fen ${fen}` : START_FEN
-    currentAnalysisFen = fen.trim() || INITIAL_FEN
+    currentAnalysisFenRef.current = fen.trim() || INITIAL_FEN
     post('stop')
     post('ucinewgame')
     post(`position ${position}`)
     post(`setoption name MultiPV value ${multiPv}`)
-    post(`go depth ${lastRequestedDepth}`)
+    post(`go depth ${lastRequestedDepthRef.current}`)
 
     return analysisPromise
   }
 
   const cancelAnalysis = () => {
-    if (!analysisLifecycle.isActive() && !isAnalyzing.value) return
+    if (!analysisLifecycle.isActive() && !isAnalyzingRef.current) return
     if (!analysisLifecycle.cancel('user')) {
       post('stop')
       abortPendingAnalysis('Analysis canceled by user.')
@@ -368,7 +399,7 @@ export function useStockfish() {
   }
 
   const stop = () => {
-    if (!analysisLifecycle.isActive() && !isAnalyzing.value) return
+    if (!analysisLifecycle.isActive() && !isAnalyzingRef.current) return
     if (!analysisLifecycle.cancel('stopped')) {
       post('stop')
       abortPendingAnalysis('Analysis stopped.')
@@ -382,20 +413,23 @@ export function useStockfish() {
     if (!analysisLifecycle.cancel('shutdown')) {
       abortPendingAnalysis(shutdownMessage)
     }
-    sawUciOk = false
-    isAnalyzing.value = false
-    isReady.value = false
-    if (!worker) return
+    sawUciOkRef.current = false
+    setIsAnalyzing(false)
+    setIsReady(false)
+    if (!workerRef.current) return
     post('stop')
     terminateWorker(true)
   }
 
-  const summary = computed(() => ({
-    ready: isReady.value,
-    analyzing: isAnalyzing.value,
-    error: lastError.value,
-    evaluation: evaluation.value,
-  }))
+  const summary = useMemo(
+    () => ({
+      ready: isReady,
+      analyzing: isAnalyzing,
+      error: lastError,
+      evaluation,
+    }),
+    [evaluation, isAnalyzing, isReady, lastError],
+  )
 
   return {
     isReady,

@@ -208,6 +208,31 @@ export const useGameStore = () => {
   const dispatch = useAppDispatch()
   const game = useAppSelector((state) => state.game)
 
+  const {
+    isReady,
+    isAnalyzing,
+    evaluation,
+    start,
+    cancelAnalysis,
+    destroy,
+    analyzePosition,
+  } = useStockfish()
+
+  const {
+    messages,
+    sending,
+    send,
+    cancelSend,
+    apiKey,
+    loadApiKey,
+    saveApiKey,
+    clearApiKey,
+    unlockApiKey,
+    lockApiKey,
+    hasStoredEncryptedKey,
+    lastError,
+  } = useChat()
+
   return {
     ...game,
     setMoves: (moves: string[]) => dispatch(setMoves(moves)),
@@ -221,6 +246,27 @@ export const useGameStore = () => {
     requestJumpToPly: (ply: number) => dispatch(requestJumpToPly(ply)),
     setEngineEnabled: (enabled: boolean) => dispatch(setEngineEnabled(enabled)),
     cancelAnalysis: () => dispatch(cancelAnalysis()),
+
+    isReady,
+    isAnalyzing,
+    evaluation,
+    start,
+    destroy,
+    analyzePosition,
+
+    messages,
+    sending,
+    send,
+    cancelSend,
+    apiKey,
+    loadApiKey,
+    saveApiKey,
+    clearApiKey,
+    unlockApiKey,
+    lockApiKey,
+    hasStoredEncryptedKey,
+    lastError,
+    sendChatMessage
   }
 }
 
